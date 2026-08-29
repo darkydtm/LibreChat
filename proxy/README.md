@@ -1,8 +1,8 @@
 # bymaga proxy
 
-This is a standalone daemon container. It converts LibreChat Chat Completions
-vision requests to bymaga Responses API requests and converts non-streaming
-Responses back to Chat Completions. Other `/v1/*` requests are forwarded.
+This is a standalone daemon container. It removes the unsupported
+`image_url.detail` field from LibreChat Chat Completions vision requests.
+Other `/v1/*` requests, including streaming responses, are forwarded unchanged.
 
 Set the bymaga endpoint in `librechat.yaml` to the Docker service URL:
 

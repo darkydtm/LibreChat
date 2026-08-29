@@ -3,29 +3,15 @@ import assert from 'node:assert/strict';
 
 const source = await import('./server.js');
 
-test('converts LibreChat image parts to Responses input parts', () => {
+test('removes detail only from image_url objects', () => {
 	const input = {
 		messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,x', detail: 'auto' } }] }],
 		detail: 'keep',
 	};
 
-	assert.deepEqual(source.toResponsesInput(input.messages), [{
-		role: 'user',
-		content: [{ type: 'input_image', image_url: 'data:image/png;base64,x' }],
-	}]);
-
-	assert.deepEqual(source.toChatCompletion({
-		id: 'resp_1',
-		created_at: 1,
-		model: 'gpt-5.6-terra',
-		output: [{ content: [{ type: 'output_text', text: 'ok' }] }],
-	}), {
-		id: 'resp_1',
-		object: 'chat.completion',
-		created: 1,
-		model: 'gpt-5.6-terra',
-		choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
-		usage: undefined,
+	assert.deepEqual(source.stripImageDetail(input), {
+		messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,x' } }] }],
+		detail: 'keep',
 	});
 });
 
