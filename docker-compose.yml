@@ -7,9 +7,12 @@ services:
     ports:
       - "${PORT}:${PORT}"
     depends_on:
-      - mongodb
-      - rag_api
-      - bymaga-proxy
+      mongodb:
+        condition: service_started
+      rag_api:
+        condition: service_started
+      bymaga-proxy:
+        condition: service_healthy
     image: registry.librechat.ai/danny-avila/librechat-dev:latest
     restart: always
     user: "${UID}:${GID}"
@@ -47,6 +50,12 @@ services:
       - BYMAGA_PROXY_PORT=8080
       - BYMAGA_API_KEY=${BYMAGA_API_KEY:-}
     restart: always
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
   admin-panel:
     container_name: admin-panel
     image: registry.librechat.ai/clickhouse/librechat-admin-panel:latest

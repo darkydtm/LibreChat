@@ -3,6 +3,7 @@ import http from 'node:http';
 const port = Number(process.env.BYMAGA_PROXY_PORT || 8080);
 const upstream = (process.env.BYMAGA_UPSTREAM_URL || 'https://f456.fly.dev/v1').replace(/\/$/, '');
 const apiKey = process.env.BYMAGA_API_KEY;
+const requestTimeout = Number(process.env.BYMAGA_PROXY_TIMEOUT_MS || 180000);
 
 export { responseHeaders, toResponsesInput, toChatCompletion };
 
@@ -56,6 +57,12 @@ function readBody(request) {
 
 export const server = http.createServer(async (request, response) => {
 	try {
+		if (request.method === 'GET' && request.url === '/health') {
+			response.writeHead(200, { 'content-type': 'application/json' });
+			response.end(JSON.stringify({ status: 'ok' }));
+			return;
+		}
+
 		const body = await readBody(request);
 		const headers = new Headers(request.headers);
 		headers.delete('host');
@@ -87,11 +94,19 @@ export const server = http.createServer(async (request, response) => {
 			}
 		}
 
-		const upstreamResponse = await fetch(`${upstream}${request.url?.replace(/^\/v1/, '') || ''}`, {
-			method: request.method,
-			headers,
-			body: ['GET', 'HEAD'].includes(request.method) ? undefined : requestBody,
-		});
+		const abortController = new AbortController();
+		const timeout = setTimeout(() => abortController.abort(), requestTimeout);
+		let upstreamResponse;
+		try {
+			upstreamResponse = await fetch(`${upstream}${request.url?.replace(/^\/v1/, '') || ''}`, {
+				method: request.method,
+				headers,
+				body: ['GET', 'HEAD'].includes(request.method) ? undefined : requestBody,
+				signal: abortController.signal,
+			});
+		} finally {
+			clearTimeout(timeout);
+		}
 		if (convertResponse && !requestBody.includes(Buffer.from('"stream":true'))) {
 			const result = await upstreamResponse.json();
 			response.writeHead(upstreamResponse.status, { 'content-type': 'application/json' });
@@ -110,5 +125,8 @@ export const server = http.createServer(async (request, response) => {
 });
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
-	server.listen(port, '0.0.0.0', () => console.log(`bymaga proxy listening on ${port}`));
+	server.listen(port, '0.0.0.0', () => console.log(`bymaga proxy daemon listening on ${port}`));
+	for (const signal of ['SIGINT', 'SIGTERM']) {
+		process.once(signal, () => server.close(() => process.exit(0)));
+	}
 }
