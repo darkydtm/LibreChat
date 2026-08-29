@@ -9,6 +9,7 @@ services:
     depends_on:
       - mongodb
       - rag_api
+      - bymaga-proxy
     image: registry.librechat.ai/danny-avila/librechat-dev:latest
     restart: always
     user: "${UID}:${GID}"
@@ -21,6 +22,7 @@ services:
       - LIBRECHAT_TEMP_CREDENTIALS_PATH=/app/data/.env.temp
       - RAG_PORT=${RAG_PORT:-8000}
       - RAG_API_URL=http://rag_api:${RAG_PORT:-8000}
+      - BYMAGA_BASE_URL=${BYMAGA_BASE_URL:-http://bymaga-proxy:8080/v1}
       - PROXY=${PROXY:-}
       - HTTP_PROXY=${HTTP_PROXY:-}
       - HTTPS_PROXY=${HTTPS_PROXY:-}
@@ -37,6 +39,14 @@ services:
       - ./logs:/app/logs
       - ./skill:/app/skill
       - librechat-data:/app/data
+  bymaga-proxy:
+    build:
+      context: ./proxy
+    environment:
+      - BYMAGA_UPSTREAM_URL=${BYMAGA_UPSTREAM_URL:-https://f456.fly.dev/v1}
+      - BYMAGA_PROXY_PORT=8080
+      - BYMAGA_API_KEY=${BYMAGA_API_KEY:-}
+    restart: always
   admin-panel:
     container_name: admin-panel
     image: registry.librechat.ai/clickhouse/librechat-admin-panel:latest
