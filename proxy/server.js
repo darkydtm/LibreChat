@@ -46,6 +46,18 @@ function toChatCompletion(result) {
 	};
 }
 
+function toChatStream(result) {
+	const text = result.type === 'response.output_text.delta' ? result.delta : '';
+	if (!text) return '';
+	return `data: ${JSON.stringify({
+		id: result.response?.id,
+		object: 'chat.completion.chunk',
+		created: result.response?.created_at,
+		model: result.response?.model,
+		choices: [{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: null }],
+	})}\n\n`;
+}
+
 function readBody(request) {
 	return new Promise((resolve, reject) => {
 		const chunks = [];
@@ -72,6 +84,7 @@ export const server = http.createServer(async (request, response) => {
 
 		let requestBody = body;
 		let convertResponse = false;
+		let streamResponse = false;
 		if (request.method === 'POST' && request.url?.startsWith('/v1/chat/completions')) {
 			convertResponse = true;
 			try {
@@ -81,6 +94,7 @@ export const server = http.createServer(async (request, response) => {
 					input: toResponsesInput(chatRequest.messages),
 					stream: Boolean(chatRequest.stream),
 				};
+				streamResponse = responsesRequest.stream;
 				for (const key of ['temperature', 'top_p', 'max_output_tokens', 'tools', 'tool_choice']) {
 					if (chatRequest[key] !== undefined) responsesRequest[key] = chatRequest[key];
 				}
@@ -107,10 +121,39 @@ export const server = http.createServer(async (request, response) => {
 		} finally {
 			clearTimeout(timeout);
 		}
-		if (convertResponse && !requestBody.includes(Buffer.from('"stream":true'))) {
+		if (convertResponse && !streamResponse) {
 			const result = await upstreamResponse.json();
 			response.writeHead(upstreamResponse.status, { 'content-type': 'application/json' });
 			response.end(JSON.stringify(upstreamResponse.ok ? toChatCompletion(result) : result));
+			return;
+		}
+		if (convertResponse) {
+			response.writeHead(upstreamResponse.status, {
+				'content-type': 'text/event-stream',
+				'cache-control': 'no-cache',
+				'connection': 'keep-alive',
+			});
+			if (upstreamResponse.body) {
+				const reader = upstreamResponse.body.pipeThrough(new TextDecoderStream()).getReader();
+				let buffer = '';
+				while (true) {
+					const { done, value } = await reader.read();
+					if (done) break;
+					buffer += value;
+					const events = buffer.split('\n\n');
+					buffer = events.pop() || '';
+					for (const event of events) {
+						const data = event.split('\n').find((line) => line.startsWith('data:'))?.slice(5).trim();
+						if (!data || data === '[DONE]') continue;
+						try {
+							const chunk = toChatStream(JSON.parse(data));
+							if (chunk) response.write(chunk);
+						} catch {}
+					}
+				}
+			}
+			response.write('data: [DONE]\n\n');
+			response.end();
 			return;
 		}
 		response.writeHead(upstreamResponse.status, responseHeaders(upstreamResponse.headers));
