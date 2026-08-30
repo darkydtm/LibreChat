@@ -37,6 +37,12 @@ function readBody(request) {
 }
 
 export const server = http.createServer(async (request, response) => {
+	const abortController = new AbortController();
+	const abortRequest = () => abortController.abort();
+	request.once('aborted', abortRequest);
+	response.once('close', abortRequest);
+	const timeout = setTimeout(() => abortController.abort(), requestTimeout);
+
 	try {
 		if (request.method === 'GET' && request.url === '/health') {
 			response.writeHead(200, { 'content-type': 'application/json' });
@@ -63,27 +69,30 @@ export const server = http.createServer(async (request, response) => {
 			}
 		}
 
-		const abortController = new AbortController();
-		const timeout = setTimeout(() => abortController.abort(), requestTimeout);
-		let upstreamResponse;
-		try {
-			upstreamResponse = await fetch(`${upstream}${request.url?.replace(/^\/v1/, '') || ''}`, {
-				method: request.method,
-				headers,
-				body: ['GET', 'HEAD'].includes(request.method) ? undefined : requestBody,
-				signal: abortController.signal,
-			});
-		} finally {
-			clearTimeout(timeout);
-		}
+		const upstreamResponse = await fetch(`${upstream}${request.url?.replace(/^\/v1/, '') || ''}`, {
+			method: request.method,
+			headers,
+			body: ['GET', 'HEAD'].includes(request.method) ? undefined : requestBody,
+			signal: abortController.signal,
+		});
+		if (response.destroyed) return;
 		response.writeHead(upstreamResponse.status, responseHeaders(upstreamResponse.headers));
 		if (upstreamResponse.body) {
-			for await (const chunk of upstreamResponse.body) response.write(chunk);
+			for await (const chunk of upstreamResponse.body) {
+				if (response.destroyed) return;
+				response.write(chunk);
+			}
 		}
-		response.end();
+		if (!response.destroyed) response.end();
 	} catch (error) {
-		response.writeHead(502, { 'content-type': 'application/json' });
-		response.end(JSON.stringify({ error: { message: error.message } }));
+		if (!response.headersSent && !response.destroyed) {
+			response.writeHead(abortController.signal.aborted ? 504 : 502, { 'content-type': 'application/json' });
+			response.end(JSON.stringify({ error: { message: error.message } }));
+		}
+	} finally {
+		clearTimeout(timeout);
+		request.off('aborted', abortRequest);
+		response.off('close', abortRequest);
 	}
 });
 

@@ -86,6 +86,18 @@ describe('ErrorController', () => {
     });
   });
 
+  it('destroys a response when streaming already sent headers', () => {
+    const destroy = jest.fn();
+    mockRes.headersSent = true;
+    mockRes.destroyed = false;
+    mockRes.destroy = destroy;
+
+    ErrorController(new Error('stream failed'), mockReq, mockRes, mockNext);
+
+    expect(destroy).toHaveBeenCalledWith(expect.objectContaining({ message: 'stream failed' }));
+    expect(mockRes.status).not.toHaveBeenCalled();
+  });
+
   describe('Duplicate key error handling', () => {
     it('should handle duplicate key error (code 11000)', () => {
       const duplicateKeyError = {

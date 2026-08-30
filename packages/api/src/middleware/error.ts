@@ -64,6 +64,13 @@ export const ErrorController = (
     if (!err) {
       return next();
     }
+    if (res.destroyed) {
+      return;
+    }
+    if (res.headersSent) {
+      res.destroy(err);
+      return;
+    }
     const error = err as CustomError;
 
     if (
