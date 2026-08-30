@@ -65,10 +65,13 @@ export const server = http.createServer(async (request, response) => {
 				const chatRequest = stripImageDetail(JSON.parse(body));
 				const messageInfo = (chatRequest.messages ?? []).map((message) => ({
 					role: message.role,
+					keys: Object.keys(message).sort(),
 					contentType: Array.isArray(message.content) ? 'array' : typeof message.content,
 					contentBytes: message.content == null ? 0 : JSON.stringify(message.content).length,
 					toolCalls: message.tool_calls?.length ?? 0,
 					toolCallId: message.tool_call_id ?? null,
+					toolCallKeys: (message.tool_calls ?? []).map((call) => Object.keys(call).sort()),
+					functionKeys: (message.tool_calls ?? []).map((call) => Object.keys(call.function ?? {}).sort()),
 				}));
 				requestInfo = `bytes=${body.length} messages=${chatRequest.messages?.length ?? 0} tools=${chatRequest.tools?.length ?? 0} shape=${JSON.stringify(messageInfo)}`;
 				requestBody = Buffer.from(JSON.stringify(chatRequest));
