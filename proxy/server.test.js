@@ -28,3 +28,63 @@ test('converts LibreChat image parts to Responses input parts', () => {
 		usage: undefined,
 	});
 });
+
+test('converts Chat Completions tool messages to Responses input items', () => {
+	assert.deepEqual(source.toResponsesInput([
+		{
+			role: 'assistant',
+			tool_calls: [{ id: 'call-1', function: { name: 'web_search', arguments: '{"query":"latest"}' } }],
+		},
+		{ role: 'tool', tool_call_id: 'call-1', content: 'search result' },
+	]), [
+		{ type: 'function_call', call_id: 'call-1', name: 'web_search', arguments: '{"query":"latest"}' },
+		{ type: 'function_call_output', call_id: 'call-1', output: 'search result' },
+	]);
+});
+
+test('converts Responses function calls to Chat Completions chunks', () => {
+	assert.deepEqual(source.toChatStream({
+		type: 'response.output_item.added',
+		output_index: 0,
+		item: { type: 'function_call', call_id: 'call-1', name: 'web_search' },
+	}), {
+		id: 'call-1',
+		object: 'chat.completion.chunk',
+		choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call-1', type: 'function', function: { name: 'web_search', arguments: '' } }] }, finish_reason: null }],
+	});
+
+	assert.deepEqual(source.toChatStream({
+		type: 'response.function_call_arguments.delta',
+		output_index: 0,
+		delta: '{"query":"latest"}',
+	}), {
+		object: 'chat.completion.chunk',
+		choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '{"query":"latest"}' } }] }, finish_reason: null }],
+	});
+});
+
+test('converts streamed Responses function calls over HTTP', async () => {
+	const originalFetch = global.fetch;
+	global.fetch = async (url, options) => {
+		if (String(url).startsWith('http://127.0.0.1:')) return originalFetch(url, options);
+		return new Response([
+		'data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call-1","name":"web_search"}}',
+		'data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{}"}',
+		'data: [DONE]',
+	].join('\n\n') + '\n\n', { headers: { 'content-type': 'text/event-stream' } });
+	};
+	await new Promise((resolve) => source.server.listen(0, resolve));
+	try {
+		const response = await fetch(`http://127.0.0.1:${source.server.address().port}/v1/chat/completions`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ model: 'gpt-5.6-terra', stream: true, messages: [{ role: 'user', content: 'search' }] }),
+		});
+		const body = await response.text();
+		assert.match(body, /"tool_calls"/);
+		assert.match(body, /data: \[DONE\]/);
+	} finally {
+		global.fetch = originalFetch;
+		await new Promise((resolve, reject) => source.server.close((error) => error ? reject(error) : resolve()));
+	}
+});
