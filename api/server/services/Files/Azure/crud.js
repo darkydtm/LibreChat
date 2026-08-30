@@ -12,6 +12,7 @@ const {
   getRemoteFileFetchTimeoutMs,
   assertRemoteFileContentLength,
 } = require('@librechat/api');
+const { retryAsync } = require('~/server/utils/retry');
 
 const defaultBasePath = 'images';
 const { AZURE_STORAGE_PUBLIC_ACCESS = 'true', AZURE_CONTAINER_NAME = 'files' } = process.env;
@@ -71,10 +72,11 @@ async function saveURLToAzure({
 }) {
   try {
     const maxBytes = getRemoteFileFetchMaxBytes();
-    const response = await fetch(assertRemoteFileURL(URL), {
+    const remoteUrl = assertRemoteFileURL(URL);
+    const response = await retryAsync(() => fetch(remoteUrl, {
       timeout: getRemoteFileFetchTimeoutMs(),
       size: maxBytes,
-    });
+    }));
     if (!response.ok) {
       throw new Error(`Failed to fetch URL: ${response.status} ${response.statusText}`);
     }

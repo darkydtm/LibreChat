@@ -8,6 +8,7 @@ const {
   getRemoteFileFetchTimeoutMs,
   assertRemoteFileContentLength,
 } = require('@librechat/api');
+const { retryAsync } = require('~/server/utils/retry');
 const { logger } = require('@librechat/data-schemas');
 const { EModelEndpoint } = require('librechat-data-provider');
 const { resizeImageBuffer } = require('~/server/services/Files/images/resize');
@@ -122,13 +123,14 @@ async function saveLocalBuffer({ userId, buffer, fileName, basePath = 'images' }
 async function saveFileFromURL({ userId, URL, fileName, basePath = 'images' }) {
   try {
     const maxBytes = getRemoteFileFetchMaxBytes();
-    const response = await axios({
-      url: assertRemoteFileURL(URL),
+    const remoteUrl = assertRemoteFileURL(URL);
+    const response = await retryAsync(() => axios({
+      url: remoteUrl,
       responseType: 'arraybuffer',
       timeout: getRemoteFileFetchTimeoutMs(),
       maxContentLength: maxBytes,
       maxBodyLength: maxBytes,
-    });
+    }));
     assertRemoteFileContentLength(response.headers, maxBytes);
 
     const buffer = Buffer.from(response.data, 'binary');

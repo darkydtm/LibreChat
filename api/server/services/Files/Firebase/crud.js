@@ -11,6 +11,7 @@ const {
   getRemoteFileFetchTimeoutMs,
   assertRemoteFileContentLength,
 } = require('@librechat/api');
+const { retryAsync } = require('~/server/utils/retry');
 const { ref, uploadBytes, getDownloadURL, deleteObject } = require('firebase/storage');
 const { getBufferMetadata } = require('~/server/utils');
 
@@ -65,10 +66,11 @@ async function saveURLToFirebase({ userId, URL, fileName, basePath = 'images' })
 
   const storageRef = ref(storage, `${basePath}/${userId.toString()}/${fileName}`);
   const maxBytes = getRemoteFileFetchMaxBytes();
-  const response = await fetch(assertRemoteFileURL(URL), {
+  const remoteUrl = assertRemoteFileURL(URL);
+  const response = await retryAsync(() => fetch(remoteUrl, {
     timeout: getRemoteFileFetchTimeoutMs(),
     size: maxBytes,
-  });
+  }));
   if (!response.ok) {
     throw new Error(`Failed to fetch URL: ${response.status} ${response.statusText}`);
   }
