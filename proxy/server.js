@@ -63,7 +63,14 @@ export const server = http.createServer(async (request, response) => {
 		if (request.method === 'POST' && request.url?.startsWith('/v1/chat/completions')) {
 			try {
 				const chatRequest = stripImageDetail(JSON.parse(body));
-				requestInfo = `bytes=${body.length} messages=${chatRequest.messages?.length ?? 0} tools=${chatRequest.tools?.length ?? 0}`;
+				const messageInfo = (chatRequest.messages ?? []).map((message) => ({
+					role: message.role,
+					contentType: Array.isArray(message.content) ? 'array' : typeof message.content,
+					contentBytes: message.content == null ? 0 : JSON.stringify(message.content).length,
+					toolCalls: message.tool_calls?.length ?? 0,
+					toolCallId: message.tool_call_id ?? null,
+				}));
+				requestInfo = `bytes=${body.length} messages=${chatRequest.messages?.length ?? 0} tools=${chatRequest.tools?.length ?? 0} shape=${JSON.stringify(messageInfo)}`;
 				requestBody = Buffer.from(JSON.stringify(chatRequest));
 				headers.set('content-type', 'application/json');
 			} catch {
