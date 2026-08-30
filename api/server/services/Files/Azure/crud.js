@@ -73,10 +73,18 @@ async function saveURLToAzure({
   try {
     const maxBytes = getRemoteFileFetchMaxBytes();
     const remoteUrl = assertRemoteFileURL(URL);
-    const response = await retryAsync(() => fetch(remoteUrl, {
-      timeout: getRemoteFileFetchTimeoutMs(),
-      size: maxBytes,
-    }));
+    const response = await retryAsync(async () => {
+      const result = await fetch(remoteUrl, {
+        timeout: getRemoteFileFetchTimeoutMs(),
+        size: maxBytes,
+      });
+      if (!result.ok && (result.status === 408 || result.status === 425 || result.status === 429 || result.status >= 500)) {
+        throw Object.assign(new Error(`Failed to fetch URL: ${result.status} ${result.statusText}`), {
+          status: result.status,
+        });
+      }
+      return result;
+    });
     if (!response.ok) {
       throw new Error(`Failed to fetch URL: ${response.status} ${response.statusText}`);
     }
