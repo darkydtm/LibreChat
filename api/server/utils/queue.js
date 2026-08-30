@@ -13,6 +13,12 @@ const _LB = {
  */
 const _LB_INTERVAL_MS = Math.ceil(1000 / 60); // 60 req/s
 
+function _LB_CALLBACK(callback, ...args) {
+  try {
+    Promise.resolve(callback(...args)).catch(() => undefined);
+  } catch {}
+}
+
 /**
  * Executes the next function in the leaky bucket queue.
  * This function is called at regular intervals defined by _LB_INTERVAL_MS.
@@ -33,13 +39,9 @@ const _LB_EXEC_NEXT = async () => {
 
   try {
     const data = await asyncFunc(...args);
-    try {
-      callback(null, data);
-    } catch {}
+    _LB_CALLBACK(callback, null, data);
   } catch (e) {
-    try {
-      callback(e);
-    } catch {}
+    _LB_CALLBACK(callback, e);
   }
 };
 

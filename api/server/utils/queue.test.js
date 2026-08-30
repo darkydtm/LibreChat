@@ -21,3 +21,19 @@ test('continues with the next task when a callback fails', async () => {
     });
   });
 });
+
+test('handles rejected async callbacks without stopping the queue', async () => {
+  const results = [];
+
+  await new Promise((resolve) => {
+    LB_QueueAsyncCall(async () => 'first', [], async () => {
+      results.push('first');
+      throw new Error('async callback failed');
+    });
+    LB_QueueAsyncCall(async () => 'second', [], (_error, data) => {
+      results.push(data);
+      assert.deepEqual(results, ['first', 'second']);
+      resolve();
+    });
+  });
+});
