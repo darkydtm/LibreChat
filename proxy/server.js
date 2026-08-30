@@ -37,11 +37,9 @@ function readBody(request) {
 }
 
 export const server = http.createServer(async (request, response) => {
-	const abortController = new AbortController();
-	const abortRequest = () => abortController.abort();
-	request.once('aborted', abortRequest);
-	response.once('close', abortRequest);
-	const timeout = setTimeout(() => abortController.abort(), requestTimeout);
+	let abortController;
+	let abortRequest;
+	let timeout;
 
 	try {
 		if (request.method === 'GET' && request.url === '/health') {
@@ -69,6 +67,12 @@ export const server = http.createServer(async (request, response) => {
 			}
 		}
 
+		abortController = new AbortController();
+		abortRequest = () => abortController.abort();
+		response.once('close', abortRequest);
+		timeout = setTimeout(() => abortController.abort(), requestTimeout);
+		request.once('aborted', abortRequest);
+
 		const upstreamResponse = await fetch(`${upstream}${request.url?.replace(/^\/v1/, '') || ''}`, {
 			method: request.method,
 			headers,
@@ -86,13 +90,15 @@ export const server = http.createServer(async (request, response) => {
 		if (!response.destroyed) response.end();
 	} catch (error) {
 		if (!response.headersSent && !response.destroyed) {
-			response.writeHead(abortController.signal.aborted ? 504 : 502, { 'content-type': 'application/json' });
+			response.writeHead(abortController?.signal.aborted ? 504 : 502, { 'content-type': 'application/json' });
 			response.end(JSON.stringify({ error: { message: error.message } }));
 		}
 	} finally {
-		clearTimeout(timeout);
-		request.off('aborted', abortRequest);
-		response.off('close', abortRequest);
+		if (timeout) clearTimeout(timeout);
+		if (abortRequest) {
+			request.off('aborted', abortRequest);
+			response.off('close', abortRequest);
+		}
 	}
 });
 

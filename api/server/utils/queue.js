@@ -5,6 +5,7 @@
 const _LB = {
   queue: [],
   interval: null,
+  running: false,
 };
 
 /**
@@ -16,7 +17,9 @@ const _LB_INTERVAL_MS = Math.ceil(1000 / 60); // 60 req/s
 function _LB_CALLBACK(callback, ...args) {
   try {
     Promise.resolve(callback(...args)).catch(() => undefined);
-  } catch {}
+  } catch (error) {
+    console.error('[LB_QueueAsyncCall] Callback failed:', error);
+  }
 }
 
 /**
@@ -24,6 +27,9 @@ function _LB_CALLBACK(callback, ...args) {
  * This function is called at regular intervals defined by _LB_INTERVAL_MS.
  */
 const _LB_EXEC_NEXT = async () => {
+  if (_LB.running) {
+    return;
+  }
   if (_LB.queue.length === 0) {
     clearInterval(_LB.interval);
     _LB.interval = null;
@@ -36,12 +42,15 @@ const _LB_EXEC_NEXT = async () => {
   }
 
   const { asyncFunc, args, callback } = next;
+  _LB.running = true;
 
   try {
     const data = await asyncFunc(...args);
     _LB_CALLBACK(callback, null, data);
   } catch (e) {
     _LB_CALLBACK(callback, e);
+  } finally {
+    _LB.running = false;
   }
 };
 

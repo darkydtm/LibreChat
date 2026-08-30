@@ -67,7 +67,7 @@ async function saveURLToFirebase({ userId, URL, fileName, basePath = 'images' })
   const storageRef = ref(storage, `${basePath}/${userId.toString()}/${fileName}`);
   const maxBytes = getRemoteFileFetchMaxBytes();
   const remoteUrl = assertRemoteFileURL(URL);
-  const response = await retryAsync(async () => {
+  const buffer = await retryAsync(async () => {
     const result = await fetch(remoteUrl, {
       timeout: getRemoteFileFetchTimeoutMs(),
       size: maxBytes,
@@ -77,16 +77,13 @@ async function saveURLToFirebase({ userId, URL, fileName, basePath = 'images' })
         status: result.status,
       });
     }
-    return result;
+    assertRemoteFileContentLength(result.headers, maxBytes);
+    const body = await result.buffer();
+    if (body.length > maxBytes) {
+      throw new Error(`Remote file response too large: ${body.length} bytes`);
+    }
+    return body;
   });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch URL: ${response.status} ${response.statusText}`);
-  }
-  assertRemoteFileContentLength(response.headers, maxBytes);
-  const buffer = await response.buffer();
-  if (buffer.length > maxBytes) {
-    throw new Error(`Remote file response too large: ${buffer.length} bytes`);
-  }
 
   try {
     await uploadBytes(storageRef, buffer);

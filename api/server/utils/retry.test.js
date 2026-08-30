@@ -26,3 +26,29 @@ test('does not retry permanent client failures', async () => {
   );
   assert.equal(attempts, 1);
 });
+
+test('does not retry errors without a transient network signal', async () => {
+  let attempts = 0;
+
+  await assert.rejects(
+    retryAsync(async () => {
+      attempts++;
+      throw new Error('invalid response');
+    }),
+    { message: 'invalid response' },
+  );
+  assert.equal(attempts, 1);
+});
+
+test('retries network errors identified by their error code', async () => {
+  let attempts = 0;
+
+  await assert.rejects(
+    retryAsync(async () => {
+      attempts++;
+      throw Object.assign(new Error('connection reset'), { code: 'ECONNRESET' });
+    }),
+    { message: 'connection reset' },
+  );
+  assert.equal(attempts, 3);
+});
