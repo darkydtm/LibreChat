@@ -33,9 +33,13 @@ const _LB_EXEC_NEXT = async () => {
 
   try {
     const data = await asyncFunc(...args);
-    callback(null, data);
+    try {
+      callback(null, data);
+    } catch {}
   } catch (e) {
-    callback(e);
+    try {
+      callback(e);
+    } catch {}
   }
 };
 
