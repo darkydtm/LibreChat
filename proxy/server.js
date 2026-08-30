@@ -40,11 +40,14 @@ export const server = http.createServer(async (request, response) => {
 	let abortController;
 	let abortRequest;
 	let timeout;
+	const startedAt = Date.now();
+	const logRequest = (status) => console.log(`[proxy] ${request.method} ${request.url} ${status} ${Date.now() - startedAt}ms`);
 
 	try {
 		if (request.method === 'GET' && request.url === '/health') {
 			response.writeHead(200, { 'content-type': 'application/json' });
 			response.end(JSON.stringify({ status: 'ok' }));
+			logRequest(200);
 			return;
 		}
 
@@ -63,6 +66,7 @@ export const server = http.createServer(async (request, response) => {
 			} catch {
 				response.writeHead(400, { 'content-type': 'application/json' });
 				response.end(JSON.stringify({ error: { message: 'Request body must be valid JSON' } }));
+				logRequest(400);
 				return;
 			}
 		}
@@ -84,10 +88,12 @@ export const server = http.createServer(async (request, response) => {
 			for await (const chunk of upstreamResponse.body) response.write(chunk);
 		}
 		response.end();
+		logRequest(upstreamResponse.status);
 	} catch (error) {
 		if (!response.headersSent && !response.destroyed) {
 			response.writeHead(abortController?.signal.aborted ? 504 : 502, { 'content-type': 'application/json' });
 			response.end(JSON.stringify({ error: { message: error.message } }));
+			logRequest(abortController?.signal.aborted ? 504 : 502);
 		}
 	} finally {
 		if (timeout) clearTimeout(timeout);
