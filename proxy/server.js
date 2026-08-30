@@ -41,7 +41,8 @@ export const server = http.createServer(async (request, response) => {
 	let abortRequest;
 	let timeout;
 	const startedAt = Date.now();
-	const logRequest = (status) => console.log(`[proxy] ${request.method} ${request.url} ${status} ${Date.now() - startedAt}ms`);
+	let requestInfo = '';
+	const logRequest = (status, detail = '') => console.log(`[proxy] ${request.method} ${request.url} ${status} ${Date.now() - startedAt}ms ${requestInfo}${detail}`);
 
 	try {
 		if (request.method === 'GET' && request.url === '/health') {
@@ -61,7 +62,9 @@ export const server = http.createServer(async (request, response) => {
 		let requestBody = body;
 		if (request.method === 'POST' && request.url?.startsWith('/v1/chat/completions')) {
 			try {
-				requestBody = Buffer.from(JSON.stringify(stripImageDetail(JSON.parse(body))));
+				const chatRequest = stripImageDetail(JSON.parse(body));
+				requestInfo = `bytes=${body.length} messages=${chatRequest.messages?.length ?? 0} tools=${chatRequest.tools?.length ?? 0}`;
+				requestBody = Buffer.from(JSON.stringify(chatRequest));
 				headers.set('content-type', 'application/json');
 			} catch {
 				response.writeHead(400, { 'content-type': 'application/json' });
@@ -83,6 +86,13 @@ export const server = http.createServer(async (request, response) => {
 			signal: abortController.signal,
 		});
 		if (response.destroyed) return;
+		if (!upstreamResponse.ok) {
+			const errorBody = await upstreamResponse.text();
+			response.writeHead(upstreamResponse.status, { 'content-type': 'application/json' });
+			response.end(errorBody);
+			logRequest(upstreamResponse.status, ` error=${errorBody.slice(0, 300)}`);
+			return;
+		}
 		response.writeHead(upstreamResponse.status, responseHeaders(upstreamResponse.headers));
 		if (upstreamResponse.body) {
 			for await (const chunk of upstreamResponse.body) response.write(chunk);
