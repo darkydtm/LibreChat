@@ -27,6 +27,18 @@ function stripImageDetail(value) {
 	]));
 }
 
+function normalizeChatRequest(value) {
+	const request = stripImageDetail(value);
+	return {
+		...request,
+		messages: request.messages?.map((message) => {
+			if (message.role !== 'tool' || message.name === undefined) return message;
+			const { name, ...withoutName } = message;
+			return withoutName;
+		}),
+	};
+}
+
 function readBody(request) {
 	return new Promise((resolve, reject) => {
 		const chunks = [];
@@ -40,15 +52,11 @@ export const server = http.createServer(async (request, response) => {
 	let abortController;
 	let abortRequest;
 	let timeout;
-	const startedAt = Date.now();
-	let requestInfo = '';
-	const logRequest = (status, detail = '') => console.log(`[proxy] ${request.method} ${request.url} ${status} ${Date.now() - startedAt}ms ${requestInfo}${detail}`);
 
 	try {
 		if (request.method === 'GET' && request.url === '/health') {
 			response.writeHead(200, { 'content-type': 'application/json' });
 			response.end(JSON.stringify({ status: 'ok' }));
-			logRequest(200);
 			return;
 		}
 
@@ -62,24 +70,11 @@ export const server = http.createServer(async (request, response) => {
 		let requestBody = body;
 		if (request.method === 'POST' && request.url?.startsWith('/v1/chat/completions')) {
 			try {
-				const chatRequest = stripImageDetail(JSON.parse(body));
-				const messageInfo = (chatRequest.messages ?? []).map((message) => ({
-					role: message.role,
-					keys: Object.keys(message).sort(),
-					contentType: Array.isArray(message.content) ? 'array' : typeof message.content,
-					contentBytes: message.content == null ? 0 : JSON.stringify(message.content).length,
-					toolCalls: message.tool_calls?.length ?? 0,
-					toolCallId: message.tool_call_id ?? null,
-					toolCallKeys: (message.tool_calls ?? []).map((call) => Object.keys(call).sort()),
-					functionKeys: (message.tool_calls ?? []).map((call) => Object.keys(call.function ?? {}).sort()),
-				}));
-				requestInfo = `bytes=${body.length} messages=${chatRequest.messages?.length ?? 0} tools=${chatRequest.tools?.length ?? 0} shape=${JSON.stringify(messageInfo)}`;
-				requestBody = Buffer.from(JSON.stringify(chatRequest));
+				requestBody = Buffer.from(JSON.stringify(normalizeChatRequest(JSON.parse(body))));
 				headers.set('content-type', 'application/json');
 			} catch {
 				response.writeHead(400, { 'content-type': 'application/json' });
 				response.end(JSON.stringify({ error: { message: 'Request body must be valid JSON' } }));
-				logRequest(400);
 				return;
 			}
 		}
@@ -100,7 +95,6 @@ export const server = http.createServer(async (request, response) => {
 			const errorBody = await upstreamResponse.text();
 			response.writeHead(upstreamResponse.status, { 'content-type': 'application/json' });
 			response.end(errorBody);
-			logRequest(upstreamResponse.status, ` error=${errorBody.slice(0, 300)}`);
 			return;
 		}
 		response.writeHead(upstreamResponse.status, responseHeaders(upstreamResponse.headers));
@@ -108,12 +102,10 @@ export const server = http.createServer(async (request, response) => {
 			for await (const chunk of upstreamResponse.body) response.write(chunk);
 		}
 		response.end();
-		logRequest(upstreamResponse.status);
 	} catch (error) {
 		if (!response.headersSent && !response.destroyed) {
 			response.writeHead(abortController?.signal.aborted ? 504 : 502, { 'content-type': 'application/json' });
 			response.end(JSON.stringify({ error: { message: error.message } }));
-			logRequest(abortController?.signal.aborted ? 504 : 502);
 		}
 	} finally {
 		if (timeout) clearTimeout(timeout);

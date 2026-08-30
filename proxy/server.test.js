@@ -31,6 +31,7 @@ test('passes tool calls through as Chat Completions', async () => {
 		const body = JSON.parse(options.body);
 		assert.equal(body.tools[0].type, 'function');
 		assert.equal(body.tools[0].function.name, 'web_search');
+		assert.equal(body.messages[2].name, undefined);
 		return new Response(JSON.stringify({
 			choices: [{ message: { role: 'assistant', content: null, tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'web_search', arguments: '{}' } }] }, finish_reason: 'tool_calls' }],
 		}), { headers: { 'content-type': 'application/json' } });
@@ -40,7 +41,15 @@ test('passes tool calls through as Chat Completions', async () => {
 		const response = await fetch(`http://127.0.0.1:${source.server.address().port}/v1/chat/completions`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ model: 'gpt-5.6-terra', messages: [{ role: 'user', content: 'search' }], tools: [{ type: 'function', function: { name: 'web_search', parameters: { type: 'object' } } }] }),
+			body: JSON.stringify({
+				model: 'gpt-5.6-terra',
+				messages: [
+					{ role: 'user', content: 'search' },
+					{ role: 'assistant', content: null, tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'web_search', arguments: '{}' } }] },
+					{ role: 'tool', name: 'web_search', tool_call_id: 'call-1', content: 'result' },
+				],
+				tools: [{ type: 'function', function: { name: 'web_search', parameters: { type: 'object' } } }],
+			}),
 		});
 		assert.equal(response.status, 200);
 		assert.deepEqual((await response.json()).choices[0].finish_reason, 'tool_calls');
