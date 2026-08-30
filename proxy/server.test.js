@@ -51,6 +51,22 @@ test('converts Chat Completions tool messages to Responses input items', () => {
 	]);
 });
 
+test('converts Chat Completions tools to Responses tools', () => {
+	assert.deepEqual(source.toResponsesTools([{
+		type: 'function',
+		function: { name: 'web_search', description: 'Search', parameters: { type: 'object' } },
+	}]), [{
+		type: 'function',
+		name: 'web_search',
+		description: 'Search',
+		parameters: { type: 'object' },
+	}]);
+	assert.deepEqual(source.toResponsesToolChoice({ type: 'function', function: { name: 'web_search' } }), {
+		type: 'function',
+		name: 'web_search',
+	});
+});
+
 test('converts Responses function calls to Chat Completions chunks', () => {
 	assert.deepEqual(source.toChatStream({
 		type: 'response.output_item.added',

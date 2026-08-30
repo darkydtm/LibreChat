@@ -5,7 +5,7 @@ const upstream = (process.env.BYMAGA_UPSTREAM_URL || 'https://f456.fly.dev/v1').
 const apiKey = process.env.BYMAGA_API_KEY;
 const requestTimeout = Number(process.env.BYMAGA_PROXY_TIMEOUT_MS || 180000);
 
-export { responseHeaders, toResponsesInput, toChatCompletion, toChatStream };
+export { responseHeaders, toResponsesInput, toResponsesTools, toResponsesToolChoice, toChatCompletion, toChatStream };
 
 function responseHeaders(headers) {
 	const result = new Headers(headers);
@@ -54,6 +54,17 @@ function toResponsesInput(messages = []) {
 			}),
 		}];
 	});
+}
+
+function toResponsesTools(tools = []) {
+	return tools.map((tool) => tool.type === 'function' && tool.function
+		? { type: 'function', ...tool.function }
+		: tool);
+}
+
+function toResponsesToolChoice(toolChoice) {
+	if (!toolChoice || typeof toolChoice !== 'object' || !toolChoice.function) return toolChoice;
+	return { type: 'function', name: toolChoice.function.name };
 }
 
 function toChatCompletion(result) {
@@ -142,6 +153,8 @@ export const server = http.createServer(async (request, response) => {
 				for (const key of ['temperature', 'top_p', 'max_output_tokens', 'tools', 'tool_choice']) {
 					if (chatRequest[key] !== undefined) responsesRequest[key] = chatRequest[key];
 				}
+				if (responsesRequest.tools) responsesRequest.tools = toResponsesTools(responsesRequest.tools);
+				responsesRequest.tool_choice = toResponsesToolChoice(responsesRequest.tool_choice);
 				requestBody = Buffer.from(JSON.stringify(responsesRequest));
 				request.url = request.url.replace('/chat/completions', '/responses');
 				headers.set('content-type', 'application/json');
