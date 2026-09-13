@@ -51,6 +51,7 @@ function claim(): AgentQueuedTurnClaim {
     clientRequestId: 'client-1',
     fingerprint: 'fingerprint-1',
     sequence: 1,
+    admissionSlot: true,
     status: 'claimed',
     priority: false,
     text: 'queued words',
@@ -107,7 +108,7 @@ function resolverMethods() {
     getEffectiveAgentQueuedTurnPredecessor: jest.fn(
       async (
         ..._args: Parameters<AgentQueuedTurnMethods['getEffectiveAgentQueuedTurnPredecessor']>
-      ): Promise<number | undefined> => undefined,
+      ) => null,
     ),
     markAgentQueuedTurnAdmitted: jest.fn(async () => ({
       outcome: 'admitted' as const,
@@ -306,6 +307,7 @@ describe('Agent queued-turn continuation', () => {
           sourceId: 'queued-turn-1',
           claimId: 'trigger-1',
           claimBy: 'worker-1',
+          effectivePredecessorCreatedAt: NOW,
         },
         {
           userId: USER_ID,
@@ -325,6 +327,7 @@ describe('Agent queued-turn continuation', () => {
         admissionId: 'trigger-1',
         generationId: 'conversation-1',
         generationCreatedAt: NOW + 1,
+        effectivePredecessorCreatedAt: NOW,
       }),
     );
   });
@@ -342,6 +345,7 @@ describe('Agent queued-turn continuation', () => {
       sourceId: 'queued-turn-1',
       claimId: 'trigger-1',
       claimBy: 'worker-1',
+      effectivePredecessorCreatedAt: NOW,
     };
     const admission = {
       userId: USER_ID,
@@ -361,6 +365,7 @@ describe('Agent queued-turn continuation', () => {
       admissionId: 'trigger-1',
       generationId: 'conversation-1',
       generationCreatedAt: NOW + 1,
+      effectivePredecessorCreatedAt: NOW,
     });
 
     spies.hasAgentQueuedTurnAdmissionReceipt.mockResolvedValueOnce(false);
@@ -451,7 +456,105 @@ describe('Agent queued-turn continuation', () => {
     const claimed = claim();
     claimed.expectedPredecessorCreatedAt = NOW;
     spies.claimNextAgentQueuedTurn.mockResolvedValueOnce({ outcome: 'acquired', claim: claimed });
-    spies.getEffectiveAgentQueuedTurnPredecessor.mockResolvedValueOnce(NOW + 250);
+    spies.beginAgentQueuedTurnAdmission.mockResolvedValueOnce({
+      outcome: 'started',
+      turn: { ...claimed, admissionEffectivePredecessorCreatedAt: NOW + 250 },
+    });
+    const resolve = createAgentQueuedTurnResolver({
+      methods,
+      getGenerationJob: async () => null,
+      now: () => NOW,
+      claimBy: 'worker-1',
+    });
+
+    const prepared = await resolve(envelope(), { idempotencyKey: 'trigger-1' });
+    expect(prepared).toMatchObject({
+      status: 'ready',
+      expectedPredecessorCreatedAt: NOW + 250,
+      admissionSource: { effectivePredecessorCreatedAt: NOW + 250 },
+    });
+    expect(spies.beginAgentQueuedTurnAdmission).toHaveBeenCalledTimes(1);
+    if (prepared?.status !== 'ready') {
+      throw new Error('Expected a ready queued turn');
+    }
+    await prepared.settleOnAdmission?.({
+      mode: 'continue',
+      status: 'started',
+      conversationId: 'conversation-1',
+      streamId: 'stream-2',
+      generationCreatedAt: NOW + 500,
+    });
+    expect(spies.markAgentQueuedTurnAdmitted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        queuedTurnId: 'queued-turn-1',
+        effectivePredecessorCreatedAt: NOW + 250,
+      }),
+    );
+  });
+
+  it('does not reinterpret a missing underscore-suffixed anchor', async () => {
+    const { methods, spies } = resolverMethods();
+    const queued = claim();
+    queued.parentMessageId = 'user-1_';
+    spies.claimNextAgentQueuedTurn.mockResolvedValueOnce({ outcome: 'acquired', claim: queued });
+    spies.getMessages.mockResolvedValueOnce([
+      persistedMessage({
+        messageId: 'user-1',
+        parentMessageId: 'root',
+        isCreatedByUser: true,
+        createdAt: new Date(NOW - 1_000),
+      }),
+      persistedMessage({
+        messageId: 'assistant-1',
+        parentMessageId: 'user-1',
+        isCreatedByUser: false,
+        createdAt: new Date(NOW),
+      }),
+    ]);
+    const resolve = createAgentQueuedTurnResolver({
+      methods,
+      getGenerationJob: async () => null,
+      now: () => NOW,
+      claimBy: 'worker-1',
+    });
+
+    await expect(resolve(envelope(), { idempotencyKey: 'trigger-1' })).rejects.toMatchObject({
+      code: 'PARENT_NOT_FOUND',
+    });
+    expect(spies.releaseAgentQueuedTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        queuedTurnId: queued.queuedTurnId,
+        disposition: 'dead',
+        failure: expect.objectContaining({ code: 'PARENT_NOT_FOUND' }),
+      }),
+    );
+  });
+
+  it('continues after the newest regenerated response under a durable user anchor', async () => {
+    const { methods, spies } = resolverMethods();
+    const queued = claim();
+    queued.parentMessageId = 'user-1';
+    spies.claimNextAgentQueuedTurn.mockResolvedValueOnce({ outcome: 'acquired', claim: queued });
+    spies.getMessages.mockResolvedValueOnce([
+      persistedMessage({
+        messageId: 'user-1',
+        parentMessageId: 'root',
+        isCreatedByUser: true,
+        createdAt: new Date(NOW - 3_000),
+      }),
+      persistedMessage({
+        messageId: 'old-assistant',
+        parentMessageId: 'user-1',
+        isCreatedByUser: false,
+        createdAt: new Date(NOW - 2_000),
+      }),
+      persistedMessage({
+        messageId: 'regenerated-assistant',
+        parentMessageId: 'user-1',
+        isCreatedByUser: false,
+        createdAt: new Date(NOW),
+      }),
+    ]);
     const resolve = createAgentQueuedTurnResolver({
       methods,
       getGenerationJob: async () => null,
@@ -461,15 +564,32 @@ describe('Agent queued-turn continuation', () => {
 
     await expect(resolve(envelope(), { idempotencyKey: 'trigger-1' })).resolves.toMatchObject({
       status: 'ready',
-      expectedPredecessorCreatedAt: NOW + 250,
+      parentMessageId: 'regenerated-assistant',
     });
-    expect(spies.getEffectiveAgentQueuedTurnPredecessor).toHaveBeenCalledWith({
-      user: new Types.ObjectId(USER_ID),
-      tenantId: 'tenant-1',
-      conversationId: 'conversation-1',
-      sequence: 1,
-      expectedPredecessorCreatedAt: NOW,
+  });
+
+  it('dead-letters a legacy admission order that cannot be reconstructed safely', async () => {
+    const { methods, spies } = resolverMethods();
+    (
+      spies.beginAgentQueuedTurnAdmission as unknown as jest.MockedFunction<
+        AgentQueuedTurnMethods['beginAgentQueuedTurnAdmission']
+      >
+    ).mockResolvedValueOnce({
+      outcome: 'order_unavailable',
+      turn: { ...claim(), status: 'dead' },
     });
+    const resolve = createAgentQueuedTurnResolver({
+      methods,
+      getGenerationJob: async () => null,
+      now: () => NOW,
+      claimBy: 'worker-1',
+    });
+
+    await expect(resolve(envelope(), { idempotencyKey: 'trigger-1' })).resolves.toEqual({
+      status: 'settled',
+    });
+    expect(spies.releaseAgentQueuedTurn).not.toHaveBeenCalled();
+    expect(spies.beginAgentQueuedTurnAdmission).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -776,10 +896,10 @@ describe('Agent queued-turn delivery scheduling', () => {
     );
   });
 
-  it('reconciles quarantined admission receipts during durable recovery', async () => {
+  it('reconciles a claimed indeterminate legacy admission during durable recovery', async () => {
     const turn = {
       ...queuedTurn('queued-turn-indeterminate', 1),
-      status: 'dead' as const,
+      status: 'claimed' as const,
       deliveryKey: 'delivery-indeterminate',
       deliveryState: 'published' as const,
       admissionId: 'delivery-indeterminate',
@@ -841,7 +961,7 @@ describe('Agent queued-turn delivery scheduling', () => {
   it('rotates source-fenced ambiguity without trusting transient job-store evidence', async () => {
     const turn = {
       ...queuedTurn('queued-turn-source-fenced', 1),
-      status: 'dead' as const,
+      status: 'claimed' as const,
       deliveryKey: 'delivery-source-fenced',
       deliveryState: 'published' as const,
       admissionId: 'delivery-source-fenced',
